@@ -918,8 +918,12 @@ static int sk_psock_skb_redirect(struct sk_psock *from, struct sk_buff *skb)
 static void sk_psock_tls_verdict_apply(struct sk_buff *skb,
 				       struct sk_psock *from, int verdict)
 {
+	struct strp_msg *rxm;
 	switch (verdict) {
 	case __SK_REDIRECT:
+		rxm = strp_msg(skb);
+		skb->len = rxm->full_len;
+		skb->data += rxm->offset;
 		sk_psock_skb_redirect(from, skb);
 		break;
 	case __SK_PASS:
