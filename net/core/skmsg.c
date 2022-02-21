@@ -918,12 +918,8 @@ static int sk_psock_skb_redirect(struct sk_psock *from, struct sk_buff *skb)
 static void sk_psock_tls_verdict_apply(struct sk_buff *skb,
 				       struct sk_psock *from, int verdict)
 {
-	struct strp_msg *rxm;
 	switch (verdict) {
 	case __SK_REDIRECT:
-		rxm = strp_msg(skb);
-		skb->len = rxm->full_len;
-		skb->data += rxm->offset;
 		sk_psock_skb_redirect(from, skb);
 		break;
 	case __SK_PASS:
@@ -1197,7 +1193,6 @@ static void sk_psock_verdict_data_ready(struct sock *sk)
 	read_descriptor_t desc;
 	struct sk_psock *psock;
 
-	psock = sk_psock(sk);
 
 	if (unlikely(!sock || !sock->ops || !sock->ops->read_sock))
 		return;
@@ -1207,7 +1202,9 @@ static void sk_psock_verdict_data_ready(struct sock *sk)
 	desc.count = 1;
 
 	if (tls_sw_has_ctx_rx(sk)) {
-		psock->saved_data_ready(sk);
+        psock = sk_psock(sk);
+        if (likely(psock))
+            psock->saved_data_ready(sk);
 	} else {
 		sock->ops->read_sock(sk, &desc, sk_psock_verdict_recv);
 	}

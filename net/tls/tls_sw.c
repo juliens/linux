@@ -1891,7 +1891,14 @@ int tls_sw_recvmsg(struct sock *sk,
 
 		if (!zc) {
 			if (bpf_strp_enabled) {
-				err = sk_psock_tls_strp_read(psock, skb);
+                void * saved_data = skb->data;
+                int saved_len = skb->len;
+
+                skb->len = rxm->full_len;
+                skb->data += rxm->offset;
+
+                err = sk_psock_tls_strp_read(psock, skb);
+
 				if (err != __SK_PASS) {
 					rxm->offset = rxm->offset + rxm->full_len;
 					rxm->full_len = 0;
@@ -1901,6 +1908,8 @@ int tls_sw_recvmsg(struct sock *sk,
 					__strp_unpause(&ctx->strp);
 					continue;
 				}
+                skb->len = saved_len;
+                skb->data = saved_data;
 			}
 
 			if (rxm->full_len > len) {
