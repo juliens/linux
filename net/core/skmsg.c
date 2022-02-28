@@ -1203,7 +1203,7 @@ static void sk_psock_verdict_data_ready(struct sock *sk)
 
 	if (tls_sw_has_ctx_rx(sk)) {
         psock = sk_psock(sk);
-        if (likely(psock))
+        if (likely(psock) && psock->saved_data_ready)
             psock->saved_data_ready(sk);
 	} else {
 		sock->ops->read_sock(sk, &desc, sk_psock_verdict_recv);
