@@ -1154,6 +1154,8 @@ static int sk_psock_verdict_recv(read_descriptor_t *desc, struct sk_buff *skb,
 	struct bpf_prog *prog;
 	int ret = __SK_DROP;
 	int len = skb->len;
+    struct tls_context *tls_ctx;
+    struct tls_sw_context_rx *ctx;
 
 	/* clone here so sk_eat_skb() in tcp_read_sock does not drop our data */
 	skb = skb_clone(skb, GFP_ATOMIC);
@@ -1173,6 +1175,20 @@ static int sk_psock_verdict_recv(read_descriptor_t *desc, struct sk_buff *skb,
 	if (!prog)
 		prog = READ_ONCE(psock->progs.skb_verdict);
 	if (likely(prog)) {
+        tls_ctx = tls_get_ctx(sk);
+        if (tls_ctx) {
+            ctx = tls_sw_ctx_rx(tls_ctx);
+            if (ctx) {
+                if (ctx->decrypted) {
+                    goto out;
+                }
+                ctx->tls_sk_decrypt(sk);
+                skb = ctx->recv_pkt;
+                ctx->recv_pkt = NULL;
+                __strp_unpause(&ctx->strp);
+            }
+        }
+
 		skb->sk = sk;
 		skb_dst_drop(skb);
 		skb_bpf_redirect_clear(skb);
@@ -1191,8 +1207,6 @@ static void sk_psock_verdict_data_ready(struct sock *sk)
 {
 	struct socket *sock = sk->sk_socket;
 	read_descriptor_t desc;
-	struct sk_psock *psock;
-
 
 	if (unlikely(!sock || !sock->ops || !sock->ops->read_sock))
 		return;
@@ -1201,13 +1215,7 @@ static void sk_psock_verdict_data_ready(struct sock *sk)
 	desc.error = 0;
 	desc.count = 1;
 
-	if (tls_sw_has_ctx_rx(sk)) {
-        psock = sk_psock(sk);
-        if (likely(psock) && psock->saved_data_ready)
-            psock->saved_data_ready(sk);
-	} else {
-		sock->ops->read_sock(sk, &desc, sk_psock_verdict_recv);
-	}
+	sock->ops->read_sock(sk, &desc, sk_psock_verdict_recv);
 }
 
 void sk_psock_start_verdict(struct sock *sk, struct sk_psock *psock)

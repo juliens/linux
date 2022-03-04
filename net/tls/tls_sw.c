@@ -2004,6 +2004,28 @@ end:
 	return copied ? : err;
 }
 
+
+int tls_sk_decrypt(struct sock *sk) {
+	int chunk;
+	bool zc = false;
+    int err;
+    struct sk_buff *skb;
+	struct strp_msg *rxm = NULL;
+
+	skb = tls_wait_data(sk, NULL, 0, 0, &err);
+	err = decrypt_skb_update(sk, skb, NULL, &chunk, &zc, false);
+	if (err < 0) {
+        tls_err_abort(sk, -EBADMSG);
+        return err;
+    }
+
+    rxm = strp_msg(skb);
+    skb->len = rxm->full_len;
+    skb->data += rxm->offset;
+
+    return 0;
+}
+
 ssize_t tls_sw_splice_read(struct socket *sock,  loff_t *ppos,
 			   struct pipe_inode_info *pipe,
 			   size_t len, unsigned int flags)
@@ -2154,6 +2176,8 @@ static void tls_queue(struct strparser *strp, struct sk_buff *skb)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(strp->sk);
 	struct tls_sw_context_rx *ctx = tls_sw_ctx_rx(tls_ctx);
+
+    ctx->tls_sk_decrypt = tls_sk_decrypt;
 
 	ctx->decrypted = 0;
 
