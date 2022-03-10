@@ -1154,6 +1154,7 @@ static int sk_psock_verdict_recv(read_descriptor_t *desc, struct sk_buff *skb,
 	struct bpf_prog *prog;
 	int ret = __SK_DROP;
 	int len = skb->len;
+    int err;
     struct tls_context *tls_ctx;
     struct tls_sw_context_rx *ctx;
 
@@ -1180,9 +1181,21 @@ static int sk_psock_verdict_recv(read_descriptor_t *desc, struct sk_buff *skb,
             ctx = tls_sw_ctx_rx(tls_ctx);
             if (ctx) {
                 if (ctx->decrypted) {
+		            sock_drop(sk, skb);
                     goto out;
                 }
-                ctx->tls_sk_decrypt(sk);
+                err = ctx->tls_sk_decrypt(sk);
+                if (err) {
+                    printk("ERRROR");
+		            sock_drop(sk, skb);
+                    goto out;
+                }
+                if (!ctx->decrypted) {
+                    printk("NOT DECRYPTED");
+		            sock_drop(sk, skb);
+                    goto out;
+                }
+		        sock_drop(sk, skb);
                 skb = ctx->recv_pkt;
                 ctx->recv_pkt = NULL;
                 __strp_unpause(&ctx->strp);
