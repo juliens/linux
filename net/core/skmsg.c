@@ -1036,6 +1036,10 @@ static void sk_psock_strp_read(struct strparser *strp, struct sk_buff *skb)
 	struct bpf_prog *prog;
 	int ret = __SK_DROP;
 	struct sock *sk;
+    int err;
+    struct tls_context *tls_ctx;
+    struct tls_sw_context_rx *ctx;
+	struct strp_msg *rxm = strp_msg(skb);
 
 	rcu_read_lock();
 	sk = strp->sk;
@@ -1044,8 +1048,39 @@ static void sk_psock_strp_read(struct strparser *strp, struct sk_buff *skb)
 		sock_drop(sk, skb);
 		goto out;
 	}
+
 	prog = READ_ONCE(psock->progs.stream_verdict);
 	if (likely(prog)) {
+        tls_ctx = tls_get_ctx(sk);
+        if (tls_ctx) {
+            ctx = tls_sw_ctx_rx(tls_ctx);
+            if (ctx) {
+                if (ctx->decrypted) {
+		            sock_drop(sk, skb);
+                    goto out;
+                }
+                preempt_disable();
+                local_bh_disable();
+
+	            ctx->recv_pkt = skb;
+                err = ctx->tls_sk_decrypt(sk, rxm);
+
+                local_bh_enable();
+                preempt_enable();
+                if (err) {
+		            sock_drop(sk, skb);
+                    goto out;
+                }
+                if (!ctx->decrypted) {
+		            sock_drop(sk, skb);
+                    goto out;
+                }
+
+                skb->sk = NULL;
+                ctx->recv_pkt = NULL;
+            }
+        }
+
 		skb->sk = sk;
 		skb_dst_drop(skb);
 		skb_bpf_redirect_clear(skb);
@@ -1070,7 +1105,14 @@ static int sk_psock_strp_parse(struct strparser *strp, struct sk_buff *skb)
 	struct sk_psock *psock = container_of(strp, struct sk_psock, strp);
 	struct bpf_prog *prog;
 	int ret = skb->len;
-
+	struct tls_context *tls_ctx = tls_get_ctx(strp->sk);
+	struct tls_sw_context_rx *ctx = NULL;
+    if (tls_ctx) {
+        ctx = tls_sw_ctx_rx(tls_ctx);
+        if (ctx) {
+            ctx->decrypted = 0;
+        }
+    }
 	rcu_read_lock();
 	prog = READ_ONCE(psock->progs.stream_parser);
 	if (likely(prog)) {
@@ -1090,13 +1132,9 @@ static void sk_psock_strp_data_ready(struct sock *sk)
 	rcu_read_lock();
 	psock = sk_psock(sk);
 	if (likely(psock)) {
-		if (tls_sw_has_ctx_rx(sk)) {
-			psock->saved_data_ready(sk);
-		} else {
-			write_lock_bh(&sk->sk_callback_lock);
-			strp_data_ready(&psock->strp);
-			write_unlock_bh(&sk->sk_callback_lock);
-		}
+        write_lock_bh(&sk->sk_callback_lock);
+        strp_data_ready(&psock->strp);
+        write_unlock_bh(&sk->sk_callback_lock);
 	}
 	rcu_read_unlock();
 }
@@ -1176,32 +1214,6 @@ static int sk_psock_verdict_recv(read_descriptor_t *desc, struct sk_buff *skb,
 	if (!prog)
 		prog = READ_ONCE(psock->progs.skb_verdict);
 	if (likely(prog)) {
-        tls_ctx = tls_get_ctx(sk);
-        if (tls_ctx) {
-            ctx = tls_sw_ctx_rx(tls_ctx);
-            if (ctx) {
-                if (ctx->decrypted) {
-		            sock_drop(sk, skb);
-                    goto out;
-                }
-                err = ctx->tls_sk_decrypt(sk);
-                if (err) {
-                    printk("ERRROR");
-		            sock_drop(sk, skb);
-                    goto out;
-                }
-                if (!ctx->decrypted) {
-                    printk("NOT DECRYPTED");
-		            sock_drop(sk, skb);
-                    goto out;
-                }
-		        sock_drop(sk, skb);
-                skb = ctx->recv_pkt;
-                ctx->recv_pkt = NULL;
-                __strp_unpause(&ctx->strp);
-            }
-        }
-
 		skb->sk = sk;
 		skb_dst_drop(skb);
 		skb_bpf_redirect_clear(skb);
@@ -1219,6 +1231,7 @@ out:
 static void sk_psock_verdict_data_ready(struct sock *sk)
 {
 	struct socket *sock = sk->sk_socket;
+
 	read_descriptor_t desc;
 
 	if (unlikely(!sock || !sock->ops || !sock->ops->read_sock))

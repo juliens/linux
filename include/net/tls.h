@@ -151,7 +151,8 @@ struct tls_sw_context_rx {
 	struct sk_buff_head rx_list;	/* list of decrypted 'data' records */
 	void (*saved_data_ready)(struct sock *sk);
 
-    int (*tls_sk_decrypt)(struct sock *sk);
+    bool bpf_enabled;
+    int (*tls_sk_decrypt)(struct sock *sk, struct strp_msg *rxm);
 
 	struct sk_buff *recv_pkt;
 	u8 control;
