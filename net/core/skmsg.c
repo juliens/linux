@@ -1059,14 +1059,11 @@ static void sk_psock_strp_read(struct strparser *strp, struct sk_buff *skb)
 		            sock_drop(sk, skb);
                     goto out;
                 }
-                preempt_disable();
-                local_bh_disable();
 
 	            ctx->recv_pkt = skb;
+	            migrate_disable();
                 err = ctx->tls_sk_decrypt(sk, rxm);
-
-                local_bh_enable();
-                preempt_enable();
+                migrate_enable();
                 if (err) {
 		            sock_drop(sk, skb);
                     goto out;
@@ -1195,6 +1192,7 @@ static int sk_psock_verdict_recv(read_descriptor_t *desc, struct sk_buff *skb,
     int err;
     struct tls_context *tls_ctx;
     struct tls_sw_context_rx *ctx;
+    struct strp_msg rxm;
 
 	/* clone here so sk_eat_skb() in tcp_read_sock does not drop our data */
 	skb = skb_clone(skb, GFP_ATOMIC);
@@ -1214,6 +1212,35 @@ static int sk_psock_verdict_recv(read_descriptor_t *desc, struct sk_buff *skb,
 	if (!prog)
 		prog = READ_ONCE(psock->progs.skb_verdict);
 	if (likely(prog)) {
+        tls_ctx = tls_get_ctx(sk);
+        if (tls_ctx) {
+            ctx = tls_sw_ctx_rx(tls_ctx);
+            if (ctx) {
+                if (ctx->decrypted) {
+		            sock_drop(sk, skb);
+                    goto out;
+                }
+
+	            ctx->recv_pkt = skb;
+	            migrate_disable();
+                err = ctx->tls_sk_decrypt(sk, &rxm);
+                migrate_enable();
+
+                if (err) {
+		            sock_drop(sk, skb);
+                    goto out;
+                }
+                if (!ctx->decrypted) {
+		            sock_drop(sk, skb);
+                    goto out;
+                }
+
+                skb->sk = NULL;
+                ctx->recv_pkt = NULL;
+                skb->data += rxm.offset;
+                skb->len = rxm.full_len;
+            }
+        }
 		skb->sk = sk;
 		skb_dst_drop(skb);
 		skb_bpf_redirect_clear(skb);
