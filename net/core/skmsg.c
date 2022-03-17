@@ -1192,7 +1192,7 @@ static int sk_psock_verdict_recv(read_descriptor_t *desc, struct sk_buff *skb,
     int err;
     struct tls_context *tls_ctx;
     struct tls_sw_context_rx *ctx;
-    struct strp_msg rxm;
+    struct strp_msg rxm = {};
 
 	/* clone here so sk_eat_skb() in tcp_read_sock does not drop our data */
 	skb = skb_clone(skb, GFP_ATOMIC);
