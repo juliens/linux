@@ -1892,8 +1892,14 @@ int tls_sw_recvmsg(struct sock *sk,
 
 		if (!zc) {
 			if (bpf_strp_enabled) {
+
 				err = sk_psock_tls_strp_read(psock, skb);
+
 				if (err != __SK_PASS) {
+                    if (err == __SK_REDIRECT) {
+                        skb->data += rxm->offset;
+                        skb->len = rxm->full_len;
+                    }
 					rxm->offset = rxm->offset + rxm->full_len;
 					rxm->full_len = 0;
 					if (err == __SK_DROP)
